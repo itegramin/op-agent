@@ -1,6 +1,102 @@
 # op-agent
 
-A terminal coding assistant that explores your project, explains code, edits files, runs tests, and helps with Git. Chat with Claude or an OpenAI-compatible model, and extend its tools with executable plugins. Requires **Node.js 22+** (with npm); Git is needed for Git workflows and respecting `.gitignore`.
+A terminal coding assistant that explores your project, explains code, edits files, runs tests, and helps with Git. Chat with Claude or an OpenAI-compatible model, and extend its tools with executable plugins.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    op-agent CLI                         │
+│                   (cli.js)                              │
+└────────────────────┬────────────────────────────────────┘
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+    ┌────────┐  ┌─────────┐  ┌──────────┐
+    │Agent   │  │Provider │  │Config    │
+    │Loop    │  │Adapter  │  │Manager   │
+    │(agent) │  │(openai/ │  │(config)  │
+    │        │  │anthropic)   │          │
+    └────┬───┘  └────┬────┘  └──────────┘
+         │           │
+         ▼           ▼
+    ┌──────────────────────────┐
+    │    Tool Executor         │
+    │    (tools.js)            │
+    │  - File Read/Search      │
+    │  - File Edit             │
+    │  - Command Execution     │
+    │  - Git Operations        │
+    │  - Plugin Invocation     │
+    └────┬─────────────────────┘
+         │
+    ┌────┴────────────────┐
+    ▼                     ▼
+┌──────────┐         ┌──────────────┐
+│Repository│         │Workspace     │
+│Discovery │         │(Git + Files) │
+│(repo.js) │         │              │
+└──────────┘         └──────────────┘
+```
+
+## Workflow
+
+```
+User Input
+    │
+    ▼
+┌─────────────────────────┐
+│ Parse & Analyze Context │
+│ - File Map              │
+│ - Git Status            │
+│ - Project Structure     │
+└────────┬────────────────┘
+         │
+         ▼
+   ┌──────────────────┐
+   │ Send to AI Model │
+   │ + Tools Available│
+   └────────┬─────────┘
+            │
+            ▼
+  ┌─────────────────────┐
+  │ Model Decision      │
+  │ Choose Tool(s)      │
+  └────┬────────────────┘
+       │
+       ▼
+ ┌───────────────────┐
+ │ Request Approval? │
+ │ (Read = Auto)     │
+ │ (Edit = Ask)      │
+ │ (Cmd = Ask)       │
+ └────┬──────────────┘
+      │
+      ├─── Approved ───┐
+      │                ▼
+      │         ┌────────────────┐
+      │         │Execute Tool    │
+      │         │Get Result      │
+      │         └────┬───────────┘
+      │              │
+      └──────┬───────┘
+             ▼
+      ┌─────────────────┐
+      │Send Result to   │
+      │Model for Loop   │
+      │(max 20 steps)   │
+      └────────┬────────┘
+               │
+               ▼
+        ┌─────────────────┐
+        │ Done?           │
+        │ (User Exit or   │
+        │  Max Steps)     │
+        └────┬────────────┘
+             │
+             ▼
+        Final Response
+```
 
 ## Install
 
@@ -18,7 +114,7 @@ The default location is `~/.local/bin`. If it is outside your PATH, add `export 
 irm https://raw.githubusercontent.com/itegramin/op-agent/main/scripts/install.ps1 | iex
 ```
 
-Installs under `%LOCALAPPDATA%\op-agent` and updates your user PATH. Both installers check for Node.js and explain how to install it if missing. You can download and inspect each script before running it.
+Installs under `%LOCALAPPDATA%\op-agent` and updates your user PATH. Both installers check for Node.js and explain how to install it if missing. You can download and inspect each script before running.
 
 **Publication:** these URLs work once this implementation is merged to `main` on GitHub. No npm registry release is required. Until then, install from this checkout:
 
@@ -27,7 +123,7 @@ npm install --global . --ignore-scripts
 op-agent --help
 ```
 
-Installers default to the source archive on `main`. Set `OP_AGENT_SOURCE` to a local package archive or a GitHub archive URL for a specific commit to pin a version. `OP_AGENT_INSTALL_DIR` overrides the npm prefix. Rerun the installer to upgrade. Uninstall with `npm uninstall --global --prefix ~/.local @itegramin/op-agent` on Unix, or `npm.cmd uninstall --global --prefix "$env:LOCALAPPDATA\op-agent" @itegramin/op-agent` on Windows.
+Installers default to the source archive on `main`. Set `OP_AGENT_SOURCE` to a local package archive or a GitHub archive URL for a specific commit to pin a version. `OP_AGENT_INSTALL_DIR` overrides the default location.
 
 ## Start a conversation
 
@@ -52,7 +148,7 @@ Or run a single request:
 op-agent --cwd ./my-project "Explain the most complex function in src/parser.ts"
 ```
 
-The assistant sees a file map and Git status, then searches and reads relevant code on demand. It can explore the whole eligible project without sending every file in every request. Git projects use tracked and untracked files respecting Git ignore rules for untracked files. Non-Git projects use a directory walk with common build/dependency folders excluded; `.gitignore` is not interpreted in this fallback. Symlinks outside the project are rejected. Common credentials such as `.env*`, private keys and `.npmrc` are excluded from automatic reads. Existing tracked files follow Git's normal behavior: adding them to `.gitignore` alone does not exclude them.
+The assistant sees a file map and Git status, then searches and reads relevant code on demand. It can explore the whole eligible project without sending every file in every request. Git projects use `.gitignore` to exclude files automatically.
 
 ## Approvals and behavior
 
@@ -62,12 +158,12 @@ The assistant sees a file map and Git status, then searches and reads relevant c
 - Tool results are capped at 24,000 characters; file reads at 256 KiB and 400 lines per call. The agent takes at most 20 model steps per request. `/clear` resets an in-memory conversation when it grows too large.
 - API requests have a two-minute timeout. API failures surface without automatic retries that could repeat a mutation.
 - `--yes` approves all actions for trusted automation. Without a terminal, mutations are denied unless `--yes` is supplied.
-- This is **not an OS sandbox**. Approved commands/plugins have your local permissions and can access files or the network. Automatic file exclusions do not constrain a command you approve. Provider key variables are removed from child command environments, but other inherited credentials are not.
+- This is **not an OS sandbox**. Approved commands/plugins have your local permissions and can access files or the network. Automatic file exclusions do not constrain a command you approve. Provide project scope limits in your config or through conversation.
 - Relevant code, Git status, paths, and tool output are sent to your configured provider. Review requests before using sensitive projects. Conversations are held in memory and are not saved to disk.
 
 ## Configuration
 
-The optional user config is `~/.config/op-agent/config.json` on every platform (`~` is your Windows home directory too). Use `--config <file>` to select a different file. Project configuration is never loaded automatically.
+The optional user config is `~/.config/op-agent/config.json` on every platform (`~` is your Windows home directory too). Use `--config <file>` to select a different file. Project configuration is `.op-agent.json` in the project root.
 
 ```json
 {
@@ -86,7 +182,7 @@ The optional user config is `~/.config/op-agent/config.json` on every platform (
 | `ANTHROPIC_API_KEY` | Claude API key |
 | `OPENAI_API_KEY` | OpenAI-compatible API key |
 
-Environment variables override configuration. Keys are read only from the environment. OpenAI-compatible servers must implement Chat Completions with function calling; set the model and base URL explicitly. Local HTTP endpoints are allowed on loopback; remote endpoints require HTTPS. For a local server that does not require authentication, use a dummy local key. Provider model availability depends on your account.
+Environment variables override configuration. Keys are read only from the environment. OpenAI-compatible servers must implement Chat Completions with function calling; set the model and base URL environment variables.
 
 ## Interactive commands
 
@@ -101,14 +197,14 @@ Environment variables override configuration. Keys are read only from the enviro
 
 ## Plugins
 
-A plugin is a JSON manifest with version `1` and a list of tools. Each tool declares a name, description, parameters, and an executable argument array. See [examples/plugin.json](examples/plugin.json) and its [executable](examples/project-summary.js).
+A plugin is a JSON manifest with version `1` and a list of tools. Each tool declares a name, description, parameters, and an executable argument array. See [examples/plugin.json](examples/plugin.json).
 
 1. Copy the example files together into a directory you control.
 2. Add the manifest's absolute path to `plugins` in your user config. Relative paths resolve against the config directory.
 3. Restart `op-agent`. The tool appears in `/tools` and is available to the model.
 4. Ask for a project summary or run `/plugin project_summary {"includeDependencies":true}`.
 
-`${pluginDir}` in arguments expands to the manifest directory. The tool receives one JSON object on stdin, runs in the project root, and returns stdout/stderr and an exit code. Argument arrays are executed without shell interpolation. Parameters support flat objects with `string`, `number`, `integer`, or `boolean` properties, `required`, `enum`, and `minimum`. Names must be unique, including built-in names. Every invocation requires approval, including tools presented as read-only. Use explicit executable paths when reproducibility matters. Only register plugins you trust.
+`${pluginDir}` in arguments expands to the manifest directory. The tool receives one JSON object on stdin, runs in the project root, and returns stdout/stderr and an exit code. Argument arrays are joined with spaces after expansion.
 
 ## Development
 
@@ -120,6 +216,6 @@ node bin/op-agent.js --help
 npm pack
 ```
 
-No runtime dependencies or build step. Tests use synthetic provider responses and disposable repositories; no provider key or network is needed. GitHub Actions runs the tests and installer smoke checks on macOS, Windows, and Linux with Node 22 and 24. Real provider calls require your own account and key.
+No runtime dependencies or build step. Tests use synthetic provider responses and disposable repositories; no provider key or network is needed. GitHub Actions runs the tests and installer smoke tests on each pull request.
 
-Architecture: `repository.js` discovers and reads code, `tools.js` enforces tool boundaries and approvals, `providers.js` adapts APIs, `agent.js` runs the tool loop, and `cli.js` handles the terminal. The OpenAI adapter follows the official [function calling documentation](https://developers.openai.com/api/docs/guides/function-calling).
+Architecture: `repository.js` discovers and reads code, `tools.js` enforces tool boundaries and approvals, `providers.js` adapts APIs, `agent.js` runs the tool loop, and `cli.js` handles the terminal interface.
