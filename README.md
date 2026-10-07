@@ -123,7 +123,7 @@ npm install --global . --ignore-scripts
 op-agent --help
 ```
 
-Set `OP_AGENT_SOURCE` to a local `.tar.gz` archive (Linux/macOS) or `.zip` archive (Windows), or to a GitHub archive URL, to install a specific version. `OP_AGENT_INSTALL_DIR` overrides the npm installation prefix. On Linux/macOS, the executable is placed in `<prefix>/bin` (default `~/.local/bin`); on Windows, it is placed in `<prefix>` (default `%LOCALAPPDATA%\\op-agent`).
+Set `OP_AGENT_SOURCE` to an npm-compatible package spec, such as a local `.tgz` package archive or a GitHub archive tarball URL, to install a specific version. `OP_AGENT_INSTALL_DIR` overrides the npm global prefix. On Linux/macOS, the executable is placed in `<prefix>/bin` (default `~/.local/bin`); on Windows, it is placed in `<prefix>` (default `%LOCALAPPDATA%\op-agent`).
 
 ## Start a conversation
 
