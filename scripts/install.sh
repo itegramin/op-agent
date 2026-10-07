@@ -14,3 +14,13 @@ case ":$PATH:" in
   *":$install_dir/bin:"*) ;;
   *) echo "Add $install_dir/bin to your shell PATH, then open a new terminal." ;;
 esac
+cat <<'EOF'
+
+Next steps:
+1. Create an API key at https://console.anthropic.com/
+2. Set it in your terminal: export ANTHROPIC_API_KEY='your-key'
+3. Open your project: cd /path/to/your-project
+4. Start op-agent: op-agent
+
+To use OpenAI instead, set OPENAI_API_KEY and OP_AGENT_PROVIDER=openai.
+EOF

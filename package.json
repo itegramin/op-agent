@@ -6,7 +6,7 @@
   "bin": { "op-agent": "bin/op-agent.js" },
   "files": ["bin", "src", "examples", "README.md"],
   "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test", "check": "node --check bin/op-agent.js && node --check src/agent.js && node --check src/cli.js && node --check src/config.js && node --check src/providers.js && node --check src/repository.js && node --check src/tools.js" },
+  "scripts": { "test": "node --test", "check": "node --check bin/op-agent.js && node --check src/agent.js && node --check src/cli.js && node --check src/config.js && node --check src/providers.js && node --check src/repository.js && node --check src/sessions.js && node --check src/terminal-ui.js && node --check src/tools.js" },
   "repository": { "type": "git", "url": "https://github.com/itegramin/op-agent.git" },
   "license": "UNLICENSED"
 }

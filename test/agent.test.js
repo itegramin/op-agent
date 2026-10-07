@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm, mkdir, symlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir, symlink, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -10,6 +10,8 @@ import { Agent } from '../src/agent.js';
 import { Provider } from '../src/providers.js';
 import { loadConfig } from '../src/config.js';
 import { safeText } from '../src/cli.js';
+import { TerminalUI } from '../src/terminal-ui.js';
+import { Sessions } from '../src/sessions.js';
 
 async function fixture(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'op-agent-'));
@@ -31,6 +33,16 @@ test('repository includes untracked code, respects ignore rules, and discovers r
   await assert.rejects(repo.read('ignored.txt'));
   await assert.rejects(repo.resolve('../outside'));
   assert.match(await repo.context(), /main.js/);
+});
+
+test('repository context loads root and nested AGENTS.md instructions', async t => {
+  const { dir, repo } = await fixture(t);
+  await mkdir(path.join(dir, 'src'));
+  await writeFile(path.join(dir, 'AGENTS.md'), 'Use the project test runner.');
+  await writeFile(path.join(dir, 'src', 'AGENTS.md'), 'Keep source modules small.');
+  const context = await repo.context();
+  assert.match(context, /Instructions from AGENTS\.md:[\s\S]*Use the project test runner/);
+  assert.match(context, /Instructions from src\/AGENTS\.md:[\s\S]*Keep source modules small/);
 });
 
 test('file traversal and external symlinks are rejected', { skip: process.platform === 'win32' ? 'Symlink creation may require administrator privileges' : false }, async t => {
@@ -137,6 +149,81 @@ test('agent bounds repeated tool execution', async t => {
   assert.equal(agent.messages.at(-1).role, 'tool');
 });
 
+test('agent reports context and compacts only completed earlier turns', async t => {
+  const { repo } = await fixture(t);
+  const provider = { complete: async (system, messages, tools) => {
+    assert.match(system, /Summarize this earlier coding-assistant conversation/);
+    assert.deepEqual(tools, []);
+    assert.equal(messages.length, 2);
+    return { content: 'User asked about the answer; main.js defines 42.', calls: [] };
+  } };
+  const agent = new Agent({ provider, repo, tools: new Tools(repo, async () => false), print: () => {} });
+  agent.messages = [
+    { role: 'user', content: 'Explain the answer and review the file details repeatedly.' },
+    { role: 'assistant', content: 'main.js defines 42. '.repeat(20), calls: [] },
+    { role: 'user', content: 'Now test this.' },
+    { role: 'assistant', content: 'The test passes.', calls: [] },
+  ];
+  const stats = await agent.contextStats();
+  assert.equal(stats.messages, 4);
+  assert.equal(stats.limitCharacters, 180000);
+  const compacted = await agent.compact();
+  assert(compacted.afterCharacters < compacted.beforeCharacters);
+  assert.match(agent.messages[0].content, /main\.js defines 42/);
+  assert.equal(agent.messages.at(-2).content, 'Now test this.');
+  assert.equal(agent.messages.at(-1).content, 'The test passes.');
+});
+
+test('sessions persist privately, list, resume, and branch messages', async t => {
+  const { dir, repo } = await fixture(t);
+  const storage = await mkdtemp(path.join(os.tmpdir(), 'op-agent-sessions-'));
+  t.after(() => rm(storage, { recursive: true, force: true }));
+  const sessions = new Sessions(path.join(storage, 'sessions'));
+  const session = await sessions.create({ root: repo.root, provider: 'anthropic', model: 'fixture' });
+  session.messages.push({ role: 'user', content: 'Explain main.js.' }, { role: 'assistant', content: 'It exports 42.', calls: [] });
+  await sessions.save(session);
+  const resumed = await sessions.load(session.id, repo.root);
+  assert.equal(resumed.messages.length, 2);
+  assert.equal((await sessions.list(repo.root)).length, 1);
+  session.apiKey = 'synthetic-secret';
+  await assert.rejects(sessions.save(session), /Invalid session metadata/);
+  delete session.apiKey;
+  session.messages[0].apiKey = 'synthetic-secret';
+  await assert.rejects(sessions.save(session), /unsupported message shape/);
+  delete session.messages[0].apiKey;
+  const branch = await sessions.branch(resumed);
+  assert.equal(branch.parentId, session.id);
+  assert.notEqual(branch.id, session.id);
+  assert.deepEqual(branch.messages, resumed.messages);
+  await assert.rejects(sessions.load(session.id, path.join(dir, 'elsewhere')), /belongs to/);
+  if (process.platform !== 'win32') {
+    const info = await stat(sessions.file(session.id));
+    assert.equal(info.mode & 0o777, 0o600);
+  }
+});
+
+test('CLI saves one-shot requests and resumes the same session without API credentials', async t => {
+  const { dir } = await fixture(t);
+  const storage = path.join(dir, 'session-data');
+  const config = path.join(dir, 'user-config.json');
+  await writeFile(config, JSON.stringify({ provider: 'anthropic' }));
+  const cli = path.resolve('bin/op-agent.js');
+  const env = { ...process.env, OP_AGENT_DATA_DIR: storage, OP_AGENT_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: '' };
+  const first = spawnSync(process.execPath, [cli, '--cwd', dir, '--config', config, 'Remember this request'], { encoding: 'utf8', env });
+  assert.equal(first.status, 1);
+  assert.match(first.stderr, /ANTHROPIC_API_KEY/);
+  const sessions = new Sessions(path.join(storage, 'sessions'));
+  const saved = (await sessions.list(dir))[0];
+  assert(saved);
+  assert.equal((await sessions.load(saved.id, dir)).messages[0].content, 'Remember this request');
+  const resumed = spawnSync(process.execPath, [cli, '--cwd', dir, '--config', config, '--resume', saved.id, 'Continue here'], { encoding: 'utf8', env });
+  assert.equal(resumed.status, 1);
+  assert.match(resumed.stderr, /ANTHROPIC_API_KEY/);
+  const continued = await sessions.load(saved.id, dir);
+  assert.equal(continued.messages.length, 2);
+  assert.equal(continued.messages[1].content, 'Continue here');
+});
+
 test('provider adapters serialize tool conversations and parse responses', async t => {
   const messages = [{ role: 'user', content: 'hello' }, { role: 'assistant', content: '', calls: [{ id: '1', name: 'read_file', input: { path: 'main.js' } }, { id: '2', name: 'list_files', input: {} }] }, { role: 'tool', id: '1', content: 'code' }, { role: 'tool', id: '2', content: 'files' }];
   for (const provider of ['anthropic', 'openai']) {
@@ -177,16 +264,54 @@ test('config overrides, remote transport checks and CLI entry points', async t =
   assert.equal((await loadConfig(config, { OP_AGENT_MODEL: 'env-model' })).model, 'env-model');
   await assert.rejects(loadConfig(config, { OP_AGENT_BASE_URL: 'http://remote.example/v1' }), /HTTPS/);
   assert.equal((await loadConfig(config, { OP_AGENT_BASE_URL: 'http://localhost:4000/v1' })).provider, 'openai');
+  const projectPlugin = path.join(dir, 'project-plugin.json');
+  const userPlugin = path.join(dir, 'user-plugin.json');
+  await writeFile(userPlugin, '{}');
+  await writeFile(projectPlugin, '{}');
+  await writeFile(config, JSON.stringify({ provider: 'openai', model: 'file-model', plugins: ['./user-plugin.json'] }));
+  await writeFile(path.join(dir, '.op-agent.json'), JSON.stringify({ model: 'project-model', plugins: ['./project-plugin.json'] }));
+  const merged = await loadConfig(config, {}, dir);
+  assert.equal(merged.model, 'project-model');
+  assert.deepEqual(merged.plugins, [userPlugin, projectPlugin]);
+  await writeFile(path.join(dir, '.op-agent.json'), JSON.stringify({ apiKey: 'not-allowed' }));
+  await assert.rejects(loadConfig(config, {}, dir), /Unknown configuration option.*apiKey/);
+  await writeFile(path.join(dir, '.op-agent.json'), '{}');
   await assert.rejects(loadConfig(path.join(dir, 'missing'), {}));
   const cli = path.resolve('bin/op-agent.js');
   assert.equal(spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' }).status, 0);
   assert.equal(spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).stdout.trim(), '0.1.0');
+  assert.match(spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' }).stdout, /--resume <id>/);
+  const sessionStore = path.join(dir, 'session-data');
+  const listed = spawnSync(process.execPath, [cli, '--cwd', dir, '--list-sessions'], { encoding: 'utf8', env: { ...process.env, OP_AGENT_DATA_DIR: sessionStore } });
+  assert.equal(listed.status, 0);
+  assert.match(listed.stdout, /No saved sessions/);
   const noInput = spawnSync(process.execPath, [cli, '--cwd', dir, '--config', config], { encoding: 'utf8' });
   assert.equal(noInput.status, 1);
   assert.match(noInput.stderr, /Provide a request/);
   assert.equal(safeText('\x1b[31mhello\x07'), '[31mhello');
 });
 
+test('terminal UI renders the chat screen and restores the terminal on close', () => {
+  let output = '';
+  const ui = new TerminalUI({
+    readline: {},
+    stdout: { columns: 48, rows: 12, write: text => { output += text; } },
+    provider: 'anthropic',
+    model: 'fixture',
+    root: '/tmp/project',
+  });
+  ui.start();
+  ui.addMessage('you', 'Explain this project.\x1b[31m');
+  ui.setStatus('Thinking…');
+  assert.match(output, /\x1b\[\?1049h/);
+  assert.match(output, /op-agent/);
+  assert.match(output, /anthropic\/fixture/);
+  assert.match(output, /Explain this project\./);
+  assert.doesNotMatch(output, /\x1b\[31m/);
+  assert.match(output, /Thinking…/);
+  ui.close();
+  assert.match(output, /\x1b\[\?1049l/);
+});
 
 test('approved agent commands run a specific test and stage and commit requested files', async t => {
   const { dir, repo } = await fixture(t);

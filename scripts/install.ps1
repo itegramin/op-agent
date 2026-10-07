@@ -15,4 +15,14 @@ if (($userPath -split ';') -notcontains $installDir) {
 $env:Path = "$installDir;$env:Path"
 & (Join-Path $installDir 'op-agent.cmd') --version
 if ($LASTEXITCODE -ne 0) { throw 'Installed command failed verification.' }
-Write-Host 'Installed op-agent. The command is available now and in new terminals.'
+Write-Host @'
+Installed op-agent. The command is available now and in new terminals.
+
+Next steps:
+1. Create an API key at https://console.anthropic.com/
+2. Set it in this terminal: $env:ANTHROPIC_API_KEY = 'your-key'
+3. Open your project: cd C:\path\to\your-project
+4. Start op-agent: op-agent
+
+To use OpenAI instead, set $env:OPENAI_API_KEY and $env:OP_AGENT_PROVIDER = 'openai'.
+'@

@@ -68,6 +68,15 @@ export class Repository {
     const files = await this.files();
     let status = 'Git is unavailable or this is not a Git repository.';
     try { status = (await exec('git', ['status', '--short', '--branch'], { cwd: this.root, maxBuffer: 1024 * 1024 })).stdout.slice(0, 6000); } catch {}
-    return `Project: ${this.root}\nGit status:\n${status}\nFiles (${files.length}; first 500 shown):\n${files.slice(0, 500).join('\n')}`;
+    const instructionFiles = files.filter(file => path.basename(file) === 'AGENTS.md');
+    const instructions = [];
+    let instructionSize = 0;
+    for (const file of instructionFiles) {
+      const content = await this.read(file);
+      instructionSize += Buffer.byteLength(content);
+      if (instructionSize > 32768) throw new Error('Project AGENTS.md instructions exceed 32 KiB in total. Reduce their size before starting op-agent.');
+      instructions.push(`Instructions from ${file}:\n${content}`);
+    }
+    return `Project: ${this.root}\nGit status:\n${status}\nFiles (${files.length}; first 500 shown):\n${files.slice(0, 500).join('\n')}\n${instructions.length ? `\nProject instructions:\n${instructions.join('\n\n')}` : ''}`;
   }
 }
