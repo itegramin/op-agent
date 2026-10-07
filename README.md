@@ -116,14 +116,14 @@ irm https://raw.githubusercontent.com/itegramin/op-agent/main/scripts/install.ps
 
 Installs under `%LOCALAPPDATA%\op-agent` and updates your user PATH. Both installers check for Node.js and explain how to install it if missing. You can download and inspect each script before running.
 
-**Publication:** these URLs work once this implementation is merged to `main` on GitHub. No npm registry release is required. Until then, install from this checkout:
+The installers download the source archive from `main`; no npm registry release is required. To install from a local checkout instead:
 
 ```sh
 npm install --global . --ignore-scripts
 op-agent --help
 ```
 
-Installers default to the source archive on `main`. Set `OP_AGENT_SOURCE` to a local package archive or a GitHub archive URL for a specific commit to pin a version. `OP_AGENT_INSTALL_DIR` overrides the default location.
+Set `OP_AGENT_SOURCE` to a local `.tar.gz` archive (Linux/macOS) or `.zip` archive (Windows), or to a GitHub archive URL, to install a specific version. `OP_AGENT_INSTALL_DIR` overrides the npm installation prefix. On Linux/macOS, the executable is placed in `<prefix>/bin` (default `~/.local/bin`); on Windows, it is placed in `<prefix>` (default `%LOCALAPPDATA%\\op-agent`).
 
 ## Start a conversation
 
