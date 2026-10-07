@@ -1,0 +1,12 @@
+{
+  "name": "@itegramin/op-agent",
+  "version": "0.1.0",
+  "description": "A terminal coding agent with repository context and extensible tools",
+  "type": "module",
+  "bin": { "op-agent": "bin/op-agent.js" },
+  "files": ["bin", "src", "examples", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test", "check": "node --check bin/op-agent.js && node --check src/agent.js && node --check src/cli.js && node --check src/config.js && node --check src/providers.js && node --check src/repository.js && node --check src/tools.js" },
+  "repository": { "type": "git", "url": "https://github.com/itegramin/op-agent.git" },
+  "license": "UNLICENSED"
+}

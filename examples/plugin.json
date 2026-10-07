@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "tools": [{
+    "name": "project_summary",
+    "description": "Summarize package.json scripts and dependencies in this project",
+    "parameters": {
+      "type": "object",
+      "properties": { "includeDependencies": { "type": "boolean", "description": "Include dependency names" } },
+      "required": []
+    },
+    "command": ["node", "${pluginDir}/project-summary.js"]
+  }]
+}
